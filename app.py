@@ -3,6 +3,7 @@ import pandas as pd
 import io
 import xlsxwriter
 st.set_page_config(page_title="Registro de Equipos", layout="wide")
+# Inicialización del estado
 if "estado" not in st.session_state:
    st.session_state.estado = {
        "evento_configurado": False,
@@ -11,8 +12,8 @@ if "estado" not in st.session_state:
        "datos_barras": [],
        "datos_equipos": []
    }
-st.title("📋 Registro de Equipos por Barra")
 estado = st.session_state.estado
+st.title("📋 Registro de Equipos por Barra")
 # 1. Registro de datos del evento
 if not estado["evento_configurado"]:
    with st.form("configurar_evento"):
@@ -65,7 +66,8 @@ elif len(estado["barras"]) < estado["datos_evento"]["num_barras"]:
            })
            def leer_tags(cantidad, tipo):
                tags = []
-               st.info(f"Introduce los tags NFC de {cantidad} {tipo}")
+               if cantidad > 0:
+                   st.info(f"Introduce los tags NFC de {cantidad} {tipo}(s)")
                for i in range(cantidad):
                    tag = st.text_input(f"{tipo} {i + 1}", key=f"{barra_id}_{tipo}_{i}")
                    if tag:
