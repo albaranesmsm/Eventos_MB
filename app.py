@@ -39,7 +39,7 @@ if not estado["evento_configurado"]:
                "kits": num_kits,
                "num_barras": num_barras
            }
-           st.experimental_rerun()
+           st.rerun()
 # 2. Registro de barras
 elif len(estado["barras"]) < estado["datos_evento"]["num_barras"]:
    num_actual = len(estado["barras"]) + 1
@@ -83,7 +83,7 @@ elif len(estado["barras"]) < estado["datos_evento"]["num_barras"]:
                        "tipo": tipo,
                        "tag": t
                    })
-           st.experimental_rerun()
+           st.rerun()
 # 3. Mostrar resumen y permitir edición
 else:
    st.success("✅ Registro completo")
