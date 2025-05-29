@@ -13,16 +13,17 @@ if "estado" not in st.session_state:
        "equipos": [],
        "registro_completo": False
    }
-# Función para guardar el estado en JSON
+# Guardar estado
 def guardar_estado():
    datos = {
        "evento_info": st.session_state.estado["evento_info"],
        "barra_actual": st.session_state.estado["barra_actual"],
        "datos_barras": st.session_state.estado["datos_barras"],
-       "equipos": st.session_state.estado["equipos"]
+       "equipos": st.session_state.estado["equipos"],
+       "registro_completo": st.session_state.estado["registro_completo"]
    }
    return json.dumps(datos, default=str)
-# Función para cargar estado desde JSON
+# Cargar estado
 def cargar_estado(data):
    estado = json.loads(data)
    st.session_state.estado["evento_info"] = estado["evento_info"]
@@ -31,15 +32,13 @@ def cargar_estado(data):
    st.session_state.estado["equipos"] = estado["equipos"]
    st.session_state.estado["evento_registrado"] = True
    st.session_state.estado["registro_completo"] = estado.get("registro_completo", False)
-# Paso 0: Cargar evento anterior automáticamente si se sube archivo .json
 st.title("🧊 Control de Equipos de Frío por NFC")
-archivo_cargado = st.file_uploader("📂 Selecciona un archivo JSON con el evento guardado", type=["json"])
-if archivo_cargado is not None:
-   # Solo cargar si no está ya cargado
-   if not st.session_state.estado["evento_registrado"]:
-       cargar_estado(archivo_cargado.read().decode())
-       st.experimental_rerun()
-# Paso 1: Datos del evento (solo si no hay evento cargado)
+# Cargar archivo
+archivo_cargado = st.file_uploader("📂 Cargar evento guardado (.json)", type=["json"])
+if archivo_cargado is not None and not st.session_state.estado["evento_registrado"]:
+   cargar_estado(archivo_cargado.read().decode())
+   st.experimental_rerun()
+# Paso 1: Datos del evento
 if not st.session_state.estado["evento_registrado"]:
    st.header("🔧 Configuración del Evento")
    nombre_evento = st.text_input("Nombre del evento")
@@ -51,7 +50,6 @@ if not st.session_state.estado["evento_registrado"]:
    num_kits = st.number_input("Total de Kits portátiles", min_value=0)
    num_barras = st.number_input("Número total de barras", min_value=1)
    if st.button("✅ Iniciar registro por barra"):
-       st.session_state.estado["evento_registrado"] = True
        st.session_state.estado["evento_info"] = {
            "nombre": nombre_evento,
            "codigo": codigo_evento,
@@ -62,21 +60,23 @@ if not st.session_state.estado["evento_registrado"]:
            "kits": num_kits,
            "num_barras": int(num_barras)
        }
-# Paso 2: Registro por barra
+       st.session_state.estado["evento_registrado"] = True
+       st.experimental_rerun()
+# Paso 2: Registro de barras
 elif st.session_state.estado["barra_actual"] < st.session_state.estado["evento_info"]["num_barras"]:
-   barra_idx = st.session_state.estado["barra_actual"] + 1
-   st.header(f"📍 Barra {barra_idx} de {st.session_state.estado['evento_info']['num_barras']}")
-   nombre_barra = st.text_input("Nombre o ubicación de esta barra", key=f"nombre_barra_{barra_idx}")
-   mostradores = st.number_input("Mostradores (solo número)", min_value=0, key=f"most_{barra_idx}")
-   botelleros = st.number_input("Nº Botelleros (leer tag)", min_value=0, key=f"bot_{barra_idx}")
-   vitrinas = st.number_input("Nº Vitrinas (leer tag)", min_value=0, key=f"vit_{barra_idx}")
-   enfriadores = st.number_input("Nº Enfriadores (leer tag)", min_value=0, key=f"enf_{barra_idx}")
-   kits = st.number_input("Nº Kits portátiles (leer tag)", min_value=0, key=f"kit_{barra_idx}")
+   idx = st.session_state.estado["barra_actual"]
+   st.header(f"📍 Barra {idx+1} de {st.session_state.estado['evento_info']['num_barras']}")
+   nombre_barra = st.text_input("Nombre de la barra", key=f"nombre_barra_{idx}")
+   mostradores = st.number_input("Mostradores", min_value=0, key=f"most_{idx}")
+   botelleros = st.number_input("Nº Botelleros", min_value=0, key=f"bot_{idx}")
+   vitrinas = st.number_input("Nº Vitrinas", min_value=0, key=f"vit_{idx}")
+   enfriadores = st.number_input("Nº Enfriadores", min_value=0, key=f"enf_{idx}")
+   kits = st.number_input("Nº Kits portátiles", min_value=0, key=f"kit_{idx}")
    equipos_barra = []
    def leer_tags(tipo, cantidad):
        st.subheader(f"{tipo}s")
        for i in range(int(cantidad)):
-           tag = st.text_input(f"{tipo} {i+1}", key=f"{tipo}_{barra_idx}_{i}")
+           tag = st.text_input(f"{tipo} {i+1}", key=f"{tipo}_{idx}_{i}")
            if tag:
                if tag.strip() in [e["serial"] for e in st.session_state.estado["equipos"]]:
                    st.warning(f"{tipo} {i+1}: Este código ya fue registrado")
@@ -93,20 +93,35 @@ elif st.session_state.estado["barra_actual"] < st.session_state.estado["evento_i
    leer_tags("Vitrina", vitrinas)
    leer_tags("Enfriador", enfriadores)
    leer_tags("Kit portátil", kits)
-   if st.button("💾 Guardar barra y continuar"):
-       st.session_state.estado["datos_barras"].append({
-           "evento": st.session_state.estado["evento_info"]["nombre"],
-           "codigo_evento": st.session_state.estado["evento_info"]["codigo"],
-           "barra": nombre_barra,
-           "mostradores": mostradores,
-           "botelleros": botelleros,
-           "vitrinas": vitrinas,
-           "enfriadores": enfriadores,
-           "kits_portatiles": kits
-       })
+   col1, col2 = st.columns(2)
+   if col1.button("⬅️ Volver a barra anterior", disabled=idx == 0):
+       st.session_state.estado["barra_actual"] -= 1
+       st.experimental_rerun()
+   if col2.button("💾 Guardar barra y continuar"):
+       if idx < len(st.session_state.estado["datos_barras"]):
+           st.session_state.estado["datos_barras"][idx] = {
+               "evento": st.session_state.estado["evento_info"]["nombre"],
+               "codigo_evento": st.session_state.estado["evento_info"]["codigo"],
+               "barra": nombre_barra,
+               "mostradores": mostradores,
+               "botelleros": botelleros,
+               "vitrinas": vitrinas,
+               "enfriadores": enfriadores,
+               "kits_portatiles": kits
+           }
+       else:
+           st.session_state.estado["datos_barras"].append({
+               "evento": st.session_state.estado["evento_info"]["nombre"],
+               "codigo_evento": st.session_state.estado["evento_info"]["codigo"],
+               "barra": nombre_barra,
+               "mostradores": mostradores,
+               "botelleros": botelleros,
+               "vitrinas": vitrinas,
+               "enfriadores": enfriadores,
+               "kits_portatiles": kits
+           })
        st.session_state.estado["equipos"].extend(equipos_barra)
        st.session_state.estado["barra_actual"] += 1
-       # Guardar progreso como JSON
        json_bytes = guardar_estado().encode()
        st.download_button(
            "💾 Descargar progreso (.json)",
@@ -114,7 +129,8 @@ elif st.session_state.estado["barra_actual"] < st.session_state.estado["evento_i
            file_name=f"{st.session_state.estado['evento_info']['codigo']}_progreso.json",
            mime="application/json"
        )
-# Paso 3: Finalización y exportación
+       st.experimental_rerun()
+# Paso final
 elif not st.session_state.estado["registro_completo"]:
    st.session_state.estado["registro_completo"] = True
    st.success("🎉 Registro de todas las barras completado")
@@ -124,7 +140,6 @@ elif not st.session_state.estado["registro_completo"]:
    st.dataframe(df_barras)
    st.subheader("📦 Equipos registrados (por tag NFC)")
    st.dataframe(df_equipos)
-   # Exportar a Excel
    output = BytesIO()
    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
        df_barras.to_excel(writer, sheet_name="Resumen por barra", index=False)
