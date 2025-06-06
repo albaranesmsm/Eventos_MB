@@ -1,145 +1,205 @@
 import streamlit as st
 import pandas as pd
 import datetime
-import json
-from io import BytesIO
+import sqlite3
 st.set_page_config(page_title="Control de Equipos NFC", layout="centered")
+# Conexión a la base de datos
+conn = sqlite3.connect("eventos.db", check_same_thread=False)
+cursor = conn.cursor()
+# Crear tablas si no existen
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS eventos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  nombre TEXT,
+  codigo TEXT UNIQUE,
+  mostradores INTEGER,
+  botelleros INTEGER,
+  vitrinas INTEGER,
+  enfriadores INTEGER,
+  kits INTEGER,
+  num_barras INTEGER
+)
+""")
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS barras (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  evento_codigo TEXT,
+  nombre TEXT,
+  mostradores INTEGER,
+  botelleros INTEGER,
+  vitrinas INTEGER,
+  enfriadores INTEGER,
+  kits_portatiles INTEGER
+)
+""")
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS equipos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  evento_codigo TEXT,
+  barra TEXT,
+  tipo TEXT,
+  serial TEXT UNIQUE,
+  timestamp TEXT
+)
+""")
+conn.commit()
 # Estado inicial
-if "estado" not in st.session_state:
-   st.session_state.estado = {
-       "evento_registrado": False,
-       "barra_actual": 0,
-       "datos_barras": [],
-       "equipos": [],
-       "registro_completo": False
-   }
-# Función para guardar el estado en JSON
-def guardar_estado():
-   datos = {
-       "evento_info": st.session_state.estado["evento_info"],
-       "barra_actual": st.session_state.estado["barra_actual"],
-       "datos_barras": st.session_state.estado["datos_barras"],
-       "equipos": st.session_state.estado["equipos"]
-   }
-   return json.dumps(datos, default=str)
-# Función para cargar estado desde JSON
-def cargar_estado(data):
-   estado = json.loads(data)
-   st.session_state.estado["evento_info"] = estado["evento_info"]
-   st.session_state.estado["barra_actual"] = estado["barra_actual"]
-   st.session_state.estado["datos_barras"] = estado["datos_barras"]
-   st.session_state.estado["equipos"] = estado["equipos"]
-   st.session_state.estado["evento_registrado"] = True
-   st.session_state.estado["registro_completo"] = estado.get("registro_completo", False)
-# Paso 0: Cargar evento anterior automáticamente si se sube archivo .json
+if "evento_codigo" not in st.session_state:
+   st.session_state.evento_codigo = None
 st.title("🧊 Control de Equipos de Frío por NFC")
-archivo_cargado = st.file_uploader("📂 Selecciona un archivo JSON con el evento guardado", type=["json"])
-if archivo_cargado is not None:
-   if not st.session_state.estado["evento_registrado"]:
-       cargar_estado(archivo_cargado.read().decode())
-       st.rerun()
-# Paso 1: Datos del evento (solo si no hay evento cargado)
-if not st.session_state.estado["evento_registrado"]:
+# Cargar eventos existentes
+eventos = cursor.execute("SELECT codigo, nombre FROM eventos").fetchall()
+eventos_dict = {f"{n} ({c})": c for c, n in eventos}
+opciones = ["Nuevo evento"] + list(eventos_dict.keys())
+seleccion = st.selectbox("📂 Cargar evento existente o crear uno nuevo", opciones)
+# Crear nuevo evento
+if seleccion == "Nuevo evento":
    st.header("🔧 Configuración del Evento")
    nombre_evento = st.text_input("Nombre del evento")
-   codigo_evento = st.text_input("Código del evento")
+   codigo_evento = st.text_input("Código único del evento")
    num_mostradores = st.number_input("Total de Mostradores", min_value=0)
    num_botelleros = st.number_input("Total de Botelleros", min_value=0)
    num_vitrinas = st.number_input("Total de Vitrinas", min_value=0)
    num_enfriadores = st.number_input("Total de Enfriadores", min_value=0)
    num_kits = st.number_input("Total de Kits portátiles", min_value=0)
    num_barras = st.number_input("Número total de barras", min_value=1)
-   if st.button("✅ Iniciar registro por barra"):
-       st.session_state.estado["evento_info"] = {
-           "nombre": nombre_evento,
-           "codigo": codigo_evento,
-           "mostradores": num_mostradores,
-           "botelleros": num_botelleros,
-           "vitrinas": num_vitrinas,
-           "enfriadores": num_enfriadores,
-           "kits": num_kits,
-           "num_barras": int(num_barras)
-       }
-       st.session_state.estado["evento_registrado"] = True
-       st.rerun()
-# Paso 2: Registro por barra
-elif st.session_state.estado["barra_actual"] < st.session_state.estado["evento_info"]["num_barras"]:
-   idx = st.session_state.estado["barra_actual"]
-   total = st.session_state.estado["evento_info"]["num_barras"]
-   st.header(f"📍 Barra {idx + 1} de {total}")
-   nombre_barra = st.text_input("Nombre o ubicación de esta barra", key=f"nombre_barra_{idx}")
-   mostradores = st.number_input("Mostradores (solo número)", min_value=0, key=f"most_{idx}")
-   botelleros = st.number_input("Nº Botelleros (leer tag)", min_value=0, key=f"bot_{idx}")
-   vitrinas = st.number_input("Nº Vitrinas (leer tag)", min_value=0, key=f"vit_{idx}")
-   enfriadores = st.number_input("Nº Enfriadores (leer tag)", min_value=0, key=f"enf_{idx}")
-   kits = st.number_input("Nº Kits portátiles (leer tag)", min_value=0, key=f"kit_{idx}")
-   equipos_barra = []
-   def leer_tags(tipo, cantidad):
-       st.subheader(f"{tipo}s")
-       for i in range(int(cantidad)):
-           tag = st.text_input(f"{tipo} {i+1}", key=f"{tipo}_{idx}_{i}")
-           if tag:
-               if tag.strip() in [e["serial"] for e in st.session_state.estado["equipos"]]:
-                   st.warning(f"{tipo} {i+1}: Este código ya fue registrado")
-               else:
-                   equipos_barra.append({
-                       "evento": st.session_state.estado["evento_info"]["nombre"],
-                       "codigo_evento": st.session_state.estado["evento_info"]["codigo"],
-                       "barra": nombre_barra,
-                       "tipo": tipo,
-                       "serial": tag.strip(),
-                       "timestamp": datetime.datetime.now().isoformat()
-                   })
-   leer_tags("Botellero", botelleros)
-   leer_tags("Vitrina", vitrinas)
-   leer_tags("Enfriador", enfriadores)
-   leer_tags("Kit portátil", kits)
-   col1, col2 = st.columns(2)
-   with col1:
-       if st.button("⬅️ Volver a la barra anterior"):
-           if st.session_state.estado["barra_actual"] > 0:
-               st.session_state.estado["barra_actual"] -= 1
-               st.rerun()
-   with col2:
-       if st.button("💾 Guardar barra y continuar"):
-           st.session_state.estado["datos_barras"].append({
-               "evento": st.session_state.estado["evento_info"]["nombre"],
-               "codigo_evento": st.session_state.estado["evento_info"]["codigo"],
-               "barra": nombre_barra,
-               "mostradores": mostradores,
-               "botelleros": botelleros,
-               "vitrinas": vitrinas,
-               "enfriadores": enfriadores,
-               "kits_portatiles": kits
-           })
-           st.session_state.estado["equipos"].extend(equipos_barra)
-           st.session_state.estado["barra_actual"] += 1
-           json_bytes = guardar_estado().encode()
-           st.download_button(
-               "💾 Descargar progreso (.json)",
-               data=json_bytes,
-               file_name=f"{st.session_state.estado['evento_info']['codigo']}_progreso.json",
-               mime="application/json"
-           )
-           st.rerun()
-# Paso 3: Finalización y exportación
-elif not st.session_state.estado["registro_completo"]:
-   st.session_state.estado["registro_completo"] = True
-   st.success("🎉 Registro de todas las barras completado")
-   df_barras = pd.DataFrame(st.session_state.estado["datos_barras"])
-   df_equipos = pd.DataFrame(st.session_state.estado["equipos"])
-   st.subheader("📊 Resumen por barra")
-   st.dataframe(df_barras)
-   st.subheader("📦 Equipos registrados (por tag NFC)")
-   st.dataframe(df_equipos)
-   output = BytesIO()
-   with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-       df_barras.to_excel(writer, sheet_name="Resumen por barra", index=False)
-       df_equipos.to_excel(writer, sheet_name="Equipos por tag", index=False)
-   output.seek(0)
-   st.download_button(
-       "📥 Descargar Excel completo",
-       data=output,
-       file_name=f"{st.session_state.estado['evento_info']['codigo']}_registro_evento.xlsx",
-       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-   )
+   if st.button("✅ Crear evento"):
+       try:
+           cursor.execute("""
+               INSERT INTO eventos (nombre, codigo, mostradores, botelleros, vitrinas, enfriadores, kits, num_barras)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           """, (nombre_evento, codigo_evento, num_mostradores, num_botelleros, num_vitrinas, num_enfriadores, num_kits, num_barras))
+           for i in range(1, int(num_barras) + 1):
+               cursor.execute("""
+                   INSERT INTO barras (evento_codigo, nombre, mostradores, botelleros, vitrinas, enfriadores, kits_portatiles)
+                   VALUES (?, ?, 0, 0, 0, 0, 0)
+               """, (codigo_evento, f"Barra {i}"))
+           conn.commit()
+           st.session_state.evento_codigo = codigo_evento
+           st.experimental_rerun()
+       except sqlite3.IntegrityError:
+           st.error("❌ El código del evento ya existe.")
+else:
+   st.session_state.evento_codigo = eventos_dict.get(seleccion, None)
+# Si hay evento cargado
+if st.session_state.evento_codigo:
+   codigo = st.session_state.evento_codigo
+   evento = cursor.execute("SELECT * FROM eventos WHERE codigo = ?", (codigo,)).fetchone()
+   st.success(f"Evento cargado: {evento[1]} (Código: {evento[2]})")
+   with st.expander("✏️ Editar datos generales del evento"):
+       nuevo_nombre = st.text_input("Nombre del evento", value=evento[1])
+       nuevo_mostradores = st.number_input("Total de Mostradores", min_value=0, value=evento[3])
+       nuevo_botelleros = st.number_input("Total de Botelleros", min_value=0, value=evento[4])
+       nuevo_vitrinas = st.number_input("Total de Vitrinas", min_value=0, value=evento[5])
+       nuevo_enfriadores = st.number_input("Total de Enfriadores", min_value=0, value=evento[6])
+       nuevo_kits = st.number_input("Total de Kits portátiles", min_value=0, value=evento[7])
+       nuevo_barras = st.number_input("Número total de barras", min_value=1, value=evento[8])
+       if st.button("💾 Guardar cambios en el evento"):
+           cursor.execute("""
+               UPDATE eventos SET nombre=?, mostradores=?, botelleros=?, vitrinas=?, enfriadores=?, kits=?, num_barras=?
+               WHERE codigo=?
+           """, (nuevo_nombre, nuevo_mostradores, nuevo_botelleros, nuevo_vitrinas, nuevo_enfriadores, nuevo_kits, nuevo_barras, codigo))
+           conn.commit()
+           st.success("✅ Datos del evento actualizados")
+           st.experimental_rerun()
+   st.header("🍸 Barras del evento")
+   barras = cursor.execute("SELECT * FROM barras WHERE evento_codigo = ?", (codigo,)).fetchall()
+   for barra in barras:
+       with st.expander(f"🧪 {barra[2]}"):
+           nombre = st.text_input("Nombre o ubicación", value=barra[2], key=f"nombre_{barra[0]}")
+           mostradores = st.number_input("Mostradores", min_value=0, value=barra[3], key=f"most_{barra[0]}")
+           botelleros = st.number_input("Botelleros", min_value=0, value=barra[4], key=f"bot_{barra[0]}")
+           vitrinas = st.number_input("Vitrinas", min_value=0, value=barra[5], key=f"vit_{barra[0]}")
+           enfriadores = st.number_input("Enfriadores", min_value=0, value=barra[6], key=f"enf_{barra[0]}")
+           kits = st.number_input("Kits portátiles", min_value=0, value=barra[7], key=f"kpt_{barra[0]}")
+           if st.button(f"💾 Guardar cambios en {barra[2]}", key=f"guardar_barra_{barra[0]}"):
+               cursor.execute("""
+                   UPDATE barras SET nombre=?, mostradores=?, botelleros=?, vitrinas=?, enfriadores=?, kits_portatiles=?
+                   WHERE id=?
+               """, (nombre, mostradores, botelleros, vitrinas, enfriadores, kits, barra[0]))
+               conn.commit()
+               st.success(f"✅ Barra '{nombre}' actualizada")
+               st.experimental_rerun()
+   # --- NUEVO: Registro equipos NFC por barra y tipo según cantidades definidas ---
+   st.header("🧊 Registrar equipos por barra y tipo")
+   barras = cursor.execute("SELECT * FROM barras WHERE evento_codigo = ?", (codigo,)).fetchall()
+   for barra in barras:
+       st.subheader(f"Barra: {barra[2]}")
+       # Cantidades configuradas en esta barra
+       mostradores = barra[3]
+       botelleros = barra[4]
+       vitrinas = barra[5]
+       enfriadores = barra[6]
+       kits = barra[7]
+       equipos_a_guardar = []
+       def leer_tags(tipo, cantidad):
+           st.write(f"**{tipo}s a registrar: {cantidad}**")
+           for i in range(cantidad):
+               tag_key = f"tag_{barra[0]}_{tipo}_{i}"
+               tag_value = st.text_input(f"{tipo} {i+1}", key=tag_key)
+               if tag_value:
+                   tag_strip = tag_value.strip()
+                   # Comprobar si ya está registrado en otro equipo
+                   existe = cursor.execute("SELECT COUNT(*) FROM equipos WHERE serial = ?", (tag_strip,)).fetchone()[0]
+                   if existe > 0:
+                       st.warning(f"⚠️ {tipo} {i+1}: Este tag ya fue registrado.")
+                   else:
+                       equipos_a_guardar.append({
+                           "evento_codigo": codigo,
+                           "barra": barra[2],
+                           "tipo": tipo,
+                           "serial": tag_strip,
+                           "timestamp": datetime.datetime.now().isoformat()
+                       })
+       leer_tags("Mostrador", mostradores)
+       leer_tags("Botellero", botelleros)
+       leer_tags("Vitrina", vitrinas)
+       leer_tags("Enfriador", enfriadores)
+       leer_tags("Kit portátil", kits)
+       if st.button(f"💾 Guardar equipos de {barra[2]}", key=f"guardar_equipos_{barra[0]}"):
+           for equipo in equipos_a_guardar:
+               try:
+                   cursor.execute("""
+                       INSERT INTO equipos (evento_codigo, barra, tipo, serial, timestamp)
+                       VALUES (?, ?, ?, ?, ?)
+                   """, (equipo["evento_codigo"], equipo["barra"], equipo["tipo"], equipo["serial"], equipo["timestamp"]))
+                   conn.commit()
+               except sqlite3.IntegrityError:
+                   st.error(f"❌ El tag '{equipo['serial']}' ya existe, no se ha guardado.")
+           st.success(f"✅ Equipos guardados para la barra {barra[2]}")
+           st.experimental_rerun()
+   st.header("🔁 Editar equipos por tag")
+   df_equipos = pd.read_sql_query("SELECT * FROM equipos WHERE evento_codigo = ?", conn, params=(codigo,))
+   for i, row in df_equipos.iterrows():
+       col1, col2, col3 = st.columns([3, 2, 2])
+       with col1:
+           nuevo_serial = st.text_input(f"🔹 Tag {row['id']}", value=row['serial'], key=f"serial_{row['id']}")
+       with col2:
+           nuevo_tipo = st.text_input("Tipo", value=row['tipo'], key=f"tipo_{row['id']}")
+       with col3:
+           nueva_barra = st.text_input("Barra", value=row['barra'], key=f"barra_{row['id']}")
+       if st.button("Guardar cambios", key=f"guardar_equipo_{row['id']}"):
+           try:
+               cursor.execute("""
+                   UPDATE equipos SET serial=?, tipo=?, barra=? WHERE id=?
+               """, (nuevo_serial.strip(), nuevo_tipo.strip(), nueva_barra.strip(), row['id']))
+               conn.commit()
+               st.success(f"✅ Tag actualizado")
+               st.experimental_rerun()
+           except sqlite3.IntegrityError:
+               st.error("❌ El tag ya existe.")
+   st.header("📤 Exportar a Excel actualizado")
+   df_barras = pd.read_sql_query("SELECT * FROM barras WHERE evento_codigo = ?", conn, params=(codigo,))
+   df_equipos = pd.read_sql_query("SELECT * FROM equipos WHERE evento_codigo = ?", conn, params=(codigo,))
+   @st.cache_data
+   def to_excel(df1, df2):
+       from io import BytesIO
+       output = BytesIO()
+       with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+           df1.to_excel(writer, sheet_name='Resumen por barra', index=False)
+           df2.to_excel(writer, sheet_name='Equipos por tag', index=False)
+       return output.getvalue()
+   excel_data = to_excel(df_barras, df_equipos)
+   st.download_button("📥 Descargar Excel", data=excel_data,
+                      file_name=f"{codigo}_registro_evento.xlsx",
+                      mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
